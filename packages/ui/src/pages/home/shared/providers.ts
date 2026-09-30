@@ -38,7 +38,8 @@ import {
   defaultProviderAccountConfig,
   standardProviderAccountConfig,
   type ProviderIdentitySafetyIssue,
-  type ProviderPreset
+  type ProviderPreset,
+  type ProviderPresetEndpoint
 } from "@ccr/core/providers/presets/types";
 import {
   primaryProviderPresetEndpoint as primaryProviderPresetEndpointFromPreset
@@ -627,13 +628,14 @@ export function createProviderDraftFromDeepLinkPayload(
   payload: ProviderDeepLinkPayload,
   providers: GatewayProviderConfig[]
 ): AddProviderDraft {
-  const baseUrl = payload.baseUrl.trim();
+  const rawBaseUrl = payload.baseUrl.trim();
   const preset = resolveProviderDeepLinkPreset(payload);
   const endpoint = preset ? primaryProviderPresetEndpointFromPreset(preset) : undefined;
+  const { baseUrl, presetPathParameters } = providerPresetEndpointDraftFromBaseUrl(endpoint, rawBaseUrl);
   const protocol = payload.protocol ?? endpoint?.protocols[0] ?? "openai_chat_completions";
   const accountDraft = createProviderAccountDraftFromConfig(payload.account ?? defaultProviderAccountConfigForBaseUrl(baseUrl));
   const models = mergeProviderModelLists(payload.models.length > 0 ? payload.models : preset?.defaultModels ?? []);
-  const baseName = payload.name?.trim() || inferProviderNameFromBaseUrl(baseUrl);
+  const baseName = payload.name?.trim() || inferProviderNameFromBaseUrl(rawBaseUrl);
 
   return {
     ...accountDraft,
@@ -657,6 +659,7 @@ export function createProviderDraftFromDeepLinkPayload(
     modelSearch: "",
     modelsText: models.join("\n"),
     name: uniqueProviderName(providers, baseName),
+    presetPathParameters,
     presetId: preset?.id ?? customProviderPresetId,
     protocolDetectionMode: "auto",
     providerPlugins: [],
@@ -755,6 +758,7 @@ export function createProviderDraft(providers: GatewayProviderConfig[]): AddProv
     modelsText: "",
     name: uniqueProviderName(providers),
     presetId: "",
+    presetPathParameters: {},
     protocolDetectionMode: "auto",
     providerPlugins: [],
     protocol: "openai_chat_completions",
@@ -764,8 +768,10 @@ export function createProviderDraft(providers: GatewayProviderConfig[]): AddProv
 }
 
 export function createProviderDraftFromProvider(provider: GatewayProviderConfig): AddProviderDraft {
-  const baseUrl = providerBaseUrl(provider);
-  const preset = findProviderPresetByBaseUrl(baseUrl);
+  const rawBaseUrl = providerBaseUrl(provider);
+  const preset = findProviderPresetByBaseUrl(rawBaseUrl);
+  const endpoint = preset ? primaryProviderPresetEndpointFromPreset(preset) : undefined;
+  const { baseUrl, presetPathParameters } = providerPresetEndpointDraftFromBaseUrl(endpoint, rawBaseUrl);
   const accountDraft = createProviderAccountDraftFromConfig(provider.account);
   const protocol = toProviderProtocol(provider.type) ?? toProviderProtocol(provider.provider) ?? "openai_chat_completions";
   const credentials = (provider.credentials ?? []).map(providerCredentialDraftFromConfig);
@@ -791,6 +797,7 @@ export function createProviderDraftFromProvider(provider: GatewayProviderConfig)
     modelSearch: "",
     modelsText: provider.models.join("\n"),
     name: provider.name,
+    presetPathParameters,
     presetId: preset?.id ?? customProviderPresetId,
     protocolDetectionMode: provider.protocolDetectionMode === "manual" ? "manual" : "auto",
     providerPlugins: [],
@@ -1791,12 +1798,16 @@ export function providerProbeCandidates(draft: AddProviderDraft): ProviderProbeC
   ];
   if (preset) {
     const probeAllProtocols = preset.endpoints.length === 1;
-    return preset.endpoints.map((endpoint) => ({
-      ...endpoint,
-      declaredProtocols: endpoint.protocols,
-      protocols: probeAllProtocols ? chatProtocols : endpoint.protocols,
-      source: "preset"
-    }));
+    return preset.endpoints.flatMap((endpoint) => {
+      const baseUrl = providerPresetEndpointBaseUrl(endpoint, draft.presetPathParameters);
+      return baseUrl ? [{
+        ...endpoint,
+        baseUrl,
+        declaredProtocols: endpoint.protocols,
+        protocols: probeAllProtocols ? chatProtocols : endpoint.protocols,
+        source: "preset" as const
+      }] : [];
+    });
   }
 
   return [
@@ -1873,13 +1884,92 @@ export function presetCapabilitiesFromDraft(draft: AddProviderDraft): GatewayPro
     return [];
   }
 
-  return preset.endpoints.flatMap((endpoint) =>
-    endpoint.protocols.map((type) => ({
-      baseUrl: endpoint.baseUrl,
+  return preset.endpoints.flatMap((endpoint) => {
+    const baseUrl = providerPresetEndpointBaseUrl(endpoint, draft.presetPathParameters);
+    return baseUrl ? endpoint.protocols.map((type) => ({
+      baseUrl,
       source: "preset" as const,
       type
-    }))
-  );
+    })) : [];
+  });
+}
+
+export function providerPresetEndpointBaseUrl(
+  endpoint: ProviderPresetEndpoint,
+  values: Record<string, string>
+): string {
+  let baseUrl = endpoint.baseUrl;
+  for (const parameter of endpoint.pathParameters ?? []) {
+    const value = values[parameter.name]?.trim();
+    if (!value) {
+      return "";
+    }
+    baseUrl = baseUrl.replaceAll(`{${parameter.name}}`, encodeURIComponent(value));
+  }
+  return baseUrl;
+}
+
+export function providerPresetEndpointPathParametersFromBaseUrl(
+  endpoint: ProviderPresetEndpoint | undefined,
+  baseUrl: string
+): Record<string, string> {
+  if (!endpoint?.pathParameters?.length) {
+    return {};
+  }
+
+  const emptyValues = Object.fromEntries(endpoint.pathParameters.map((parameter) => [parameter.name, ""]));
+  if (!baseUrl.trim()) {
+    return emptyValues;
+  }
+
+  try {
+    const templateUrl = new URL(providerUrlWithDefaultScheme(endpoint.baseUrl));
+    const actualUrl = new URL(providerUrlWithDefaultScheme(baseUrl));
+    if (templateUrl.origin !== actualUrl.origin) {
+      return emptyValues;
+    }
+
+    const templateSegments = templateUrl.pathname.split("/").filter(Boolean).map(decodeProviderPathSegment);
+    const actualSegments = actualUrl.pathname.split("/").filter(Boolean).map(decodeProviderPathSegment);
+    const values: Record<string, string> = {};
+    for (let index = 0; index < templateSegments.length; index += 1) {
+      const parameterName = templateSegments[index].match(/^\{([^{}]+)\}$/)?.[1];
+      if (parameterName) {
+        if (!actualSegments[index] || /^\{[^{}]+\}$/.test(actualSegments[index])) {
+          return emptyValues;
+        }
+        values[parameterName] = actualSegments[index];
+      } else if (templateSegments[index] !== actualSegments[index]) {
+        return emptyValues;
+      }
+    }
+    return { ...emptyValues, ...values };
+  } catch {
+    return emptyValues;
+  }
+}
+
+function providerPresetEndpointDraftFromBaseUrl(
+  endpoint: ProviderPresetEndpoint | undefined,
+  baseUrl: string
+): Pick<AddProviderDraft, "baseUrl" | "presetPathParameters"> {
+  const presetPathParameters = providerPresetEndpointPathParametersFromBaseUrl(endpoint, baseUrl);
+  const hasAllPathParameters = endpoint?.pathParameters?.every((parameter) =>
+    Boolean(presetPathParameters[parameter.name]?.trim())
+  ) ?? true;
+
+  return {
+    baseUrl: endpoint?.pathParameters?.length && !hasAllPathParameters ? "" : baseUrl,
+    presetPathParameters
+  };
+}
+
+function decodeProviderPathSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export function providerSelectableProtocolsFromProbe(probe: GatewayProviderProbeResult | undefined): GatewayProviderProtocol[] {

@@ -110,6 +110,7 @@ export type AddProviderDraft = {
   modelsText: string;
   name: string;
   presetId: string;
+  presetPathParameters: Record<string, string>;
   protocolDetectionMode: "auto" | "manual";
   providerPlugins: unknown[];
   protocol: GatewayProviderProtocol;

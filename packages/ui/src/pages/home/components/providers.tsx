@@ -14,7 +14,7 @@ import {
   ProviderAccountTestResult, providerBaseUrl, providerCapabilitiesSummary, ProviderCredentialDraft, ProviderDeepLinkPayload, ProviderDeepLinkRequest, providerDraftSafetyIssue, providerCredentialDraftPatchFromJson, providerHttpJsonConnectorFromDraft,
   providerBrowserConnectorFromDraft, providerBrowserCredentialsOptions,
   ProviderConnectivityCheckReport, providerCapabilityBaseUrlForProtocol, providerConnectivityApiKeyFromDraft, providerDeepLinkDisplayIcon, providerDraftHasReadyCredentialPool, providerListItemKey, providerMatchesQuery, ProviderPreset, providerPresetIconUrls, providerProbeHasSupportedProtocol,
-  providerDisplayIcon, providerGlobalBaseUrlForProbe, providerModelDisplayName, providerModelDisplayTitle, providerProbeModelsForProtocol, providerProtocolOptions, providerSelectableProtocolsFromProbe, providerUsageFieldPatch, ProviderUsageFieldTarget, providerUsageMethodOptions, Search, SelectControl,
+  providerDisplayIcon, providerGlobalBaseUrlForProbe, providerModelDisplayName, providerModelDisplayTitle, providerPresetEndpointBaseUrl, providerProbeModelsForProtocol, providerProtocolOptions, providerSelectableProtocolsFromProbe, providerUsageFieldPatch, ProviderUsageFieldTarget, providerUsageMethodOptions, Search, SelectControl,
   RefreshCw, resolveProviderDeepLinkPreset, ShieldCheck, splitLines, Switch, Tabs, TabsList, TabsTrigger, Textarea, Toggle, translatedProviderProtocolLabel, translateOptions,
   translateProbeProtocolMessage, Trash2, uniqueProviderName, uniqueProviderProtocols, useAppErrorText, useAppText, useEffect, useLayoutEffect, useMemo,
   useRef, useState, X, isGatewayProviderEnabled, isPlainRecord
@@ -970,7 +970,8 @@ function ProviderPresetCombobox({
     ? options.filter((option) => providerPresetOptionMatchesQuery(option, normalizedQuery))
     : options;
   const selectedExternalUrl = providerPresetOptionPlatformUrl(selected);
-  const selectedEndpointUrl = selected?.preset ? primaryProviderPresetEndpoint(selected.preset)?.baseUrl : undefined;
+  const selectedEndpoint = selected?.preset ? primaryProviderPresetEndpoint(selected.preset) : undefined;
+  const selectedEndpointUrl = selectedEndpoint?.pathParameters?.length ? undefined : selectedEndpoint?.baseUrl;
 
   useClientLayoutEffect(() => {
     if (!open) {
@@ -2003,6 +2004,7 @@ export function AddProviderForm({
   const iconDetectionRequestRef = useRef(0);
   const onChangeRef = useRef(onChange);
   const selectedPreset = findProviderPreset(draft.presetId);
+  const selectedPresetEndpoint = selectedPreset ? primaryProviderPresetEndpoint(selectedPreset) : undefined;
   const customEndpoint = draft.presetId === customProviderPresetId;
   const importMode = Boolean(importProvider);
   const showBaseUrl = customEndpoint;
@@ -2159,6 +2161,7 @@ export function AddProviderForm({
         modelMetadata: undefined,
         modelSearch: "",
         presetId,
+        presetPathParameters: {},
         providerPlugins: [],
         selectedModels: [],
         selectedProtocols: []
@@ -2177,6 +2180,7 @@ export function AddProviderForm({
         modelMetadata: undefined,
         modelSearch: "",
         presetId,
+        presetPathParameters: {},
         providerPlugins: [],
         selectedModels: [],
         selectedProtocols: []
@@ -2189,9 +2193,10 @@ export function AddProviderForm({
     const previousPreset = findProviderPreset(draft.presetId);
     const generatedName = providerDraftNameShouldFollowPreset(draft.name, previousPreset, t);
     const accountDraft = createProviderAccountDraftFromConfig(defaultProviderAccountConfigForPreset(presetId));
+    const presetPathParameters = Object.fromEntries((endpoint?.pathParameters ?? []).map((parameter) => [parameter.name, ""]));
     onChange({
       ...accountDraft,
-      baseUrl: endpoint?.baseUrl ?? "",
+      baseUrl: endpoint ? providerPresetEndpointBaseUrl(endpoint, presetPathParameters) : "",
       catalogModelMetadata: undefined,
       icon: "",
       modelDescriptions: undefined,
@@ -2200,6 +2205,7 @@ export function AddProviderForm({
       modelSearch: "",
       modelsText: draft.modelsText.trim() || preset?.defaultModels?.join("\n") || "",
       name: mode === "add" && preset && generatedName ? uniqueProviderName(providers, t(preset.name)) : draft.name,
+      presetPathParameters,
       presetId,
       providerPlugins: [],
       protocol: endpoint?.protocols[0] ?? draft.protocol,
@@ -2284,6 +2290,26 @@ export function AddProviderForm({
             <Field className="sm:col-span-2" label={t("Name")}>
               <Input value={draft.name} onChange={(event) => onChange({ name: event.target.value })} />
             </Field>
+            {selectedPresetEndpoint?.pathParameters?.map((parameter) => (
+              <Field className="sm:col-span-2" key={parameter.name} label={t(parameter.label)}>
+                <Input
+                  autoComplete="off"
+                  placeholder={t(parameter.placeholder ?? "")}
+                  value={draft.presetPathParameters[parameter.name] ?? ""}
+                  onChange={(event) => {
+                    const presetPathParameters = {
+                      ...draft.presetPathParameters,
+                      [parameter.name]: event.target.value
+                    };
+                    onChange({
+                      baseUrl: providerPresetEndpointBaseUrl(selectedPresetEndpoint, presetPathParameters),
+                      presetPathParameters
+                    }, true);
+                  }}
+                />
+                <div className="text-[12px] leading-5 text-muted-foreground">{t("This value is part of the URL path, not the API key.")}</div>
+              </Field>
+            ))}
             {showBaseUrl ? (
               <Field className="sm:col-span-2" label={t("API endpoint")}>
                 <Input value={draft.baseUrl} onChange={(event) => onChange({ baseUrl: event.target.value, icon: "" }, true)} />

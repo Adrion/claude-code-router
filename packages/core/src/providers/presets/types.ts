@@ -3,6 +3,11 @@ import type { GatewayProviderProtocol, ProviderAccountConfig } from "@ccr/core/c
 export type ProviderPresetEndpoint = {
   baseUrl: string;
   label?: string;
+  pathParameters?: Array<{
+    label: string;
+    name: string;
+    placeholder?: string;
+  }>;
   protocols: GatewayProviderProtocol[];
   websiteUrl?: string;
 };

@@ -122,11 +122,18 @@ function providerEndpointMatchesBaseUrl(endpointBaseUrl: string, baseUrl: string
 
   const endpointPath = normalizeProviderPresetPath(endpoint.pathname);
   const candidatePath = normalizeProviderPresetPath(candidate.pathname);
-  return endpointPath === "/" ||
-    candidatePath === "/" ||
-    candidatePath === endpointPath ||
-    candidatePath.startsWith(`${endpointPath}/`) ||
-    endpointPath.startsWith(`${candidatePath}/`);
+  if (endpointPath === "/" || candidatePath === "/") {
+    return true;
+  }
+
+  const endpointSegments = endpointPath.split("/").slice(1);
+  const candidateSegments = candidatePath.split("/").slice(1);
+  const sharedSegmentCount = Math.min(endpointSegments.length, candidateSegments.length);
+  return endpointSegments.slice(0, sharedSegmentCount).every((segment, index) =>
+    /^\{[^/]+\}$/.test(segment)
+      ? candidateSegments[index].length > 0
+      : segment === candidateSegments[index]
+  );
 }
 
 function parseProviderPresetUrl(value: string): URL | undefined {
@@ -138,7 +145,7 @@ function parseProviderPresetUrl(value: string): URL | undefined {
 }
 
 function normalizeProviderPresetPath(value: string): string {
-  const trimmed = value.replace(/\/+$/, "");
+  const trimmed = value.replace(/%7B/gi, "{").replace(/%7D/gi, "}").replace(/\/+$/, "");
   return trimmed || "/";
 }
 

@@ -8,6 +8,7 @@ import { minimaxChinaProviderPreset } from "@ccr/core/providers/presets/minimax/
 import { moonshotGlobalProviderPreset } from "@ccr/core/providers/presets/moonshot/index.ts";
 import { qiniuAiProviderPreset } from "@ccr/core/providers/presets/qiniu-ai/index.ts";
 import { xiaomiMimoProviderPreset } from "@ccr/core/providers/presets/xiaomi/index.ts";
+import type { ProviderPreset } from "@ccr/core/providers/presets/types.ts";
 import { AddProviderDialog, AddProviderForm, ProviderConnectivityCheckDialog, ProvidersView, localAgentProviderAlreadyImported, localAgentProviderPluginSuffixesForCandidate, uniqueProviderProbeProtocolRows } from "@ccr/ui/pages/home/components/providers.tsx";
 import {
   applyProviderProbeResult,
@@ -15,6 +16,7 @@ import {
   createProviderAccountDraftFromConfig,
   createProviderCredentialDraft,
   createProviderDraft,
+  createProviderDraftFromDeepLinkPayload,
   createProviderDraftFromProvider,
   createProviderInstallLinkFromDraft,
   customProviderPresetId,
@@ -35,7 +37,9 @@ import {
   providerManualFieldsForSave,
   providerPresetIconUrls,
   providerProtocolOptions,
+  providerPresetEndpointBaseUrl,
   providerProbeCandidates,
+  presetCapabilitiesFromDraft,
   providerProbeModelsForProtocol,
   providerSelectableProtocolsFromProbe,
   removeLocalAgentProviderPluginsForProvider,
@@ -44,6 +48,21 @@ import {
 import { installBrowserGlobals } from "../fixtures/index.ts";
 
 installBrowserGlobals();
+
+const pathParameterProviderPreset: ProviderPreset = {
+  aliases: [],
+  endpoints: [{
+    baseUrl: "https://api.example.test/v1/accounts/{account_id}",
+    pathParameters: [{
+      label: "Account ID",
+      name: "account_id",
+      placeholder: "Enter account ID"
+    }],
+    protocols: ["openai_chat_completions"]
+  }],
+  id: "test-path-parameter",
+  name: "Example provider"
+};
 
 test("composite field groups do not label their nested controls", () => {
   const html = renderToStaticMarkup(
@@ -89,6 +108,70 @@ test("multi-endpoint presets probe only each endpoint's declared protocols", () 
     candidates.map((candidate) => [candidate.baseUrl, candidate.protocols]),
     qiniuAiProviderPreset.endpoints.map((endpoint) => [endpoint.baseUrl, endpoint.protocols])
   );
+});
+
+test("preset path parameters resolve URLs for probing, capabilities, and provider drafts", () => {
+  setProviderPresets([pathParameterProviderPreset]);
+  const endpoint = pathParameterProviderPreset.endpoints[0];
+  const unresolvedDraft = {
+    ...createProviderDraft([]),
+    presetId: pathParameterProviderPreset.id,
+    presetPathParameters: { account_id: "" }
+  };
+
+  assert.deepEqual(providerProbeCandidates(unresolvedDraft), []);
+  assert.deepEqual(presetCapabilitiesFromDraft(unresolvedDraft), []);
+
+  const accountId = "account-110584";
+  const baseUrl = providerPresetEndpointBaseUrl(endpoint, { account_id: accountId });
+  assert.equal(baseUrl, "https://api.example.test/v1/accounts/account-110584");
+
+  const draft = {
+    ...unresolvedDraft,
+    baseUrl,
+    presetPathParameters: { account_id: accountId }
+  };
+  assert.equal(providerProbeCandidates(draft)[0]?.baseUrl, baseUrl);
+  assert.deepEqual(presetCapabilitiesFromDraft(draft), [
+    { baseUrl, source: "preset", type: "openai_chat_completions" }
+  ]);
+
+  const reopened = createProviderDraftFromProvider({
+    api_base_url: baseUrl,
+    models: ["example-model"],
+    name: "Example provider",
+    type: "openai_chat_completions"
+  });
+  assert.equal(reopened.presetId, pathParameterProviderPreset.id);
+  assert.equal(reopened.presetPathParameters.account_id, accountId);
+
+  const unresolvedProvider = createProviderDraftFromProvider({
+    api_base_url: endpoint.baseUrl,
+    models: ["example-model"],
+    name: "Example provider",
+    type: "openai_chat_completions"
+  });
+  assert.equal(unresolvedProvider.presetId, pathParameterProviderPreset.id);
+  assert.equal(unresolvedProvider.baseUrl, "");
+  assert.equal(unresolvedProvider.presetPathParameters.account_id, "");
+
+  const linkedDraft = createProviderDraftFromDeepLinkPayload({
+    baseUrl,
+    models: ["example-model"],
+    name: "Example provider"
+  }, []);
+  assert.equal(linkedDraft.presetId, pathParameterProviderPreset.id);
+  assert.equal(linkedDraft.baseUrl, baseUrl);
+  assert.equal(linkedDraft.presetPathParameters.account_id, accountId);
+
+  const unresolvedLinkDraft = createProviderDraftFromDeepLinkPayload({
+    baseUrl: endpoint.baseUrl,
+    models: ["example-model"],
+    name: "Example provider"
+  }, []);
+  assert.equal(unresolvedLinkDraft.presetId, pathParameterProviderPreset.id);
+  assert.equal(unresolvedLinkDraft.baseUrl, "");
+  assert.equal(unresolvedLinkDraft.presetPathParameters.account_id, "");
 });
 
 test("custom providers probe generic image and video generation protocols", () => {
@@ -622,6 +705,32 @@ test("AddProviderForm shows preset endpoint under the selected provider name", (
   assert.match(html, /Google Gemini/);
   assert.ok(endpoint);
   assert.equal((html.match(new RegExp(endpoint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length, 2);
+});
+
+test("preset path parameters are requested separately from the API key", () => {
+  setProviderPresets([pathParameterProviderPreset]);
+  const draft = {
+    ...createProviderDraft([]),
+    name: pathParameterProviderPreset.name,
+    presetId: pathParameterProviderPreset.id,
+    presetPathParameters: { account_id: "" }
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(AddProviderForm, {
+      activeStep: "provider",
+      draft,
+      error: "",
+      mode: "add",
+      onChange: () => undefined,
+      probeLoading: false,
+      providers: []
+    })
+  );
+
+  assert.match(html, /Account ID/);
+  assert.match(html, /placeholder="Enter account ID"/);
+  assert.match(html, /This value is part of the URL path, not the API key\./);
+  assert.doesNotMatch(html, /\{account_id\}/);
 });
 
 test("AddProviderForm lets users choose credential pool in credentials step", () => {
