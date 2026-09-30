@@ -18,6 +18,9 @@ import {
   infistarAiProviderPreset
 } from "@ccr/core/providers/presets/infistar-ai/index.ts";
 import {
+  infomaniakProviderPreset
+} from "@ccr/core/providers/presets/infomaniak/index.ts";
+import {
   moonshotChinaProviderPreset,
   moonshotGlobalProviderPreset
 } from "@ccr/core/providers/presets/moonshot/index.ts";
@@ -130,6 +133,29 @@ test("sponsor provider presets expose requested endpoints and protocols", () => 
   assert.deepEqual(infistarAiProviderPreset.endpoints[0]?.protocols, [
     "openai_chat_completions"
   ]);
+});
+
+test("Infomaniak preset matches product-scoped OpenAI-compatible endpoints", () => {
+  assert.equal(providerPresets.find((preset) => preset.id === "infomaniak"), infomaniakProviderPreset);
+  assert.equal(infomaniakProviderPreset.name, "Infomaniak AI Services");
+  assert.deepEqual(infomaniakProviderPreset.endpoints, [
+    {
+      baseUrl: "https://api.infomaniak.com/2/ai/{product_id}/openai/v1",
+      label: "OpenAI-compatible",
+      pathParameters: [
+        {
+          label: "Product ID",
+          name: "product_id",
+          placeholder: "Enter your AI Services product ID"
+        }
+      ],
+      protocols: ["openai_chat_completions"]
+    }
+  ]);
+  assert.equal(providerPresetMatchesBaseUrl(infomaniakProviderPreset, "https://api.infomaniak.com/2/ai/12345/openai/v1"), true);
+  assert.equal(providerPresetMatchesBaseUrl(infomaniakProviderPreset, "https://api.infomaniak.com/2/ai/12345/openai/v1/chat/completions"), true);
+  assert.equal(providerPresetMatchesBaseUrl(infomaniakProviderPreset, "https://api.infomaniak.com/2/ai/12345/anthropic/v1"), false);
+  assert.equal(providerPresetMatchesBaseUrl(infomaniakProviderPreset, "https://example.com/2/ai/12345/openai/v1"), false);
 });
 
 test("OpenCode Go preset resolves the official usage endpoint without matching Zen", () => {

@@ -4,6 +4,7 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { newApiKeyUsageAccountConfig } from "@ccr/core/providers/new-api.ts";
 import { geminiProviderPreset } from "@ccr/core/providers/presets/gemini/index.ts";
+import { infomaniakProviderPreset } from "@ccr/core/providers/presets/infomaniak/index.ts";
 import { minimaxChinaProviderPreset } from "@ccr/core/providers/presets/minimax/index.ts";
 import { moonshotGlobalProviderPreset } from "@ccr/core/providers/presets/moonshot/index.ts";
 import { qiniuAiProviderPreset } from "@ccr/core/providers/presets/qiniu-ai/index.ts";
@@ -1550,7 +1551,7 @@ test("provider deep link config saves anthropic probe prefix as capability URL",
 });
 
 test("provider display icon prefers custom icons and falls back to preset icons", () => {
-  setProviderPresets([geminiProviderPreset, minimaxChinaProviderPreset, xiaomiMimoProviderPreset]);
+  setProviderPresets([geminiProviderPreset, infomaniakProviderPreset, minimaxChinaProviderPreset, xiaomiMimoProviderPreset]);
 
   assert.equal(
     providerDisplayIcon({
@@ -1570,6 +1571,15 @@ test("provider display icon prefers custom icons and falls back to preset icons"
       type: "gemini_generate_content"
     }),
     providerPresetIconUrls.gemini
+  );
+  assert.equal(
+    providerDisplayIcon({
+      api_base_url: "https://api.infomaniak.com/2/ai/12345/openai/v1",
+      models: [],
+      name: "Infomaniak AI Services",
+      type: "openai_chat_completions"
+    }),
+    providerPresetIconUrls.infomaniak
   );
   assert.equal(
     providerDisplayIcon({
